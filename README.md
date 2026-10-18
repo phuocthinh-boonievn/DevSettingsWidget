@@ -102,6 +102,8 @@ iOS is best-effort and **not built** in this repo (no Mac / Xcode in CI).
 
 The workflow [`.github/workflows/release-apk.yml`](.github/workflows/release-apk.yml) runs on every `v*` tag and from **Actions → Release APK → Run workflow**. It typechecks, runs Jest, prebuilds Android, assembles a universal release APK, and publishes a GitHub Release with `DevSettingsWidget-universal.apk` attached. `permissions: contents: write` is set on that workflow so `GITHUB_TOKEN` can create the release.
 
+After prebuild, the workflow raises Gradle's heap from the template's 2 GB to 4 GB. On GitHub-hosted runners the 2 GB heap runs out of memory in `:app:mergeDexRelease` (R8, `Java heap space`).
+
 1. Bump the version together:
    - `version` in `package.json`
    - `expo.version` in `app.json`

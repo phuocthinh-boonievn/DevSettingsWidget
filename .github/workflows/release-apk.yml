@@ -74,6 +74,22 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: bash scripts/configure-release-signing.sh
 
+      - name: Raise Gradle heap for release dexing
+        run: |
+          set -euo pipefail
+          # Expo's prebuild template sets -Xmx2048m. On GitHub-hosted runners that
+          # heap is exhausted by R8 in :app:mergeDexRelease (Java heap space).
+          # 4g fits a 16 GB runner; native compilation has already peaked by then.
+          props=android/gradle.properties
+          line='org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8'
+          if grep -q '^org\.gradle\.jvmargs=' "$props"; then
+            sed -i "s/^org\\.gradle\\.jvmargs=.*/${line}/" "$props"
+          else
+            printf '\n%s\n' "$line" >> "$props"
+          fi
+          grep -q '^org\.gradle\.jvmargs=-Xmx4g ' "$props"
+          grep '^org\.gradle\.jvmargs=' "$props"
+
       - name: Build universal release APK
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
