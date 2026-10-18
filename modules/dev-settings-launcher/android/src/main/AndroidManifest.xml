@@ -1,0 +1,23 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <!--
+      Invisible trampoline launched by the home-screen widget (OPEN_URI devsettingswidget://open?...).
+      It runs the opener plan natively (no JS boot, no app UI flash) and finishes immediately.
+      Separate task affinity + excludeFromRecents so it never drags the app's task to the front.
+    -->
+    <activity
+      android:name="expo.modules.devsettingslauncher.DevSettingsTrampolineActivity"
+      android:exported="true"
+      android:excludeFromRecents="true"
+      android:noHistory="true"
+      android:taskAffinity=""
+      android:launchMode="singleInstance"
+      android:theme="@android:style/Theme.Translucent.NoTitleBar">
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:scheme="devsettingswidget" android:host="open" />
+      </intent-filter>
+    </activity>
+  </application>
+</manifest>
