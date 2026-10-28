@@ -1,8 +1,12 @@
 import { buildWidgetUri, runPlan, serializeAndroidPlan, type OpenDeps } from '../src/platform/execute';
 import {
+  BUILD_NUMBER_HINT,
+  BUILD_NUMBER_PREFERENCE_KEY,
   DEV_OPTIONS_ACTION,
   OPENER_TABLE,
+  SETTINGS_HIGHLIGHT,
   entryMatches,
+  highlightPreferenceExtras,
   selectOpeners,
   specificity,
 } from '../src/platform/openers';
@@ -27,21 +31,41 @@ describe('selectOpeners — Samsung S26 Ultra (Android 16 / API 36)', () => {
     expect(ids(ctx({ ...s26, devOptionsEnabled: true }))).toEqual([
       'android.devOptions.action',
       'samsung.devOptions.component',
-      'samsung.deviceInfo',
+      'android.deviceInfo',
       'android.settings',
       'default.appSettings',
     ]);
   });
 
-  it('dev options OFF: skips dev-options intents, goes to Software information / About phone with hint', () => {
+  it('dev options OFF: Software information with Build number highlight, then About phone, then Settings', () => {
     const plan = selectOpeners(ctx({ ...s26, devOptionsEnabled: false }));
     expect(plan.attempts.map((a) => a.id)).toEqual([
       'samsung.softwareInfo',
-      'samsung.deviceInfo',
+      'android.deviceInfo',
       'android.settings',
       'default.appSettings',
     ]);
-    expect(plan.attempts[0]?.hint).toMatch(/Build number/);
+    const highlight = highlightPreferenceExtras(BUILD_NUMBER_PREFERENCE_KEY);
+    const software = plan.attempts[0];
+    expect(software?.kind).toBe('androidIntent');
+    if (software?.kind === 'androidIntent') {
+      expect(software.packageName).toBe('com.android.settings');
+      expect(software.className).toBe('com.android.settings.Settings$SoftwareInformationActivity');
+      expect(software.extras).toEqual(highlight);
+      expect(software.hint).toBe(BUILD_NUMBER_HINT);
+    }
+    const about = plan.attempts[1];
+    expect(about?.kind).toBe('androidIntent');
+    if (about?.kind === 'androidIntent') {
+      expect(about.action).toBe('android.settings.DEVICE_INFO_SETTINGS');
+      expect(about.className).toBeUndefined();
+      expect(about.extras).toEqual(highlight);
+      expect(about.hint).toBe(BUILD_NUMBER_HINT);
+    }
+    expect(highlight.strings?.[SETTINGS_HIGHLIGHT.FRAGMENT_ARGS_KEY]).toBe('build_number');
+    expect(highlight.bundles?.[SETTINGS_HIGHLIGHT.SHOW_FRAGMENT_ARGS]?.[SETTINGS_HIGHLIGHT.FRAGMENT_ARGS_KEY]).toBe(
+      'build_number',
+    );
   });
 
   it('dev options UNKNOWN (no native module): keeps the full chain', () => {
@@ -49,7 +73,7 @@ describe('selectOpeners — Samsung S26 Ultra (Android 16 / API 36)', () => {
       'android.devOptions.action',
       'samsung.devOptions.component',
       'samsung.softwareInfo',
-      'samsung.deviceInfo',
+      'android.deviceInfo',
       'android.settings',
       'default.appSettings',
     ]);
@@ -90,6 +114,23 @@ describe('selectOpeners — generic Android', () => {
       'android.settings',
       'default.appSettings',
     ]);
+  });
+
+  it('dev options OFF: About phone with build_number highlight, then Settings', () => {
+    const plan = selectOpeners(ctx({ manufacturer: 'Google', apiLevel: 35, devOptionsEnabled: false }));
+    expect(plan.entryIds[0]).toBe('android-default');
+    expect(plan.attempts.map((a) => a.id)).toEqual([
+      'android.deviceInfo',
+      'android.settings',
+      'default.appSettings',
+    ]);
+    const about = plan.attempts[0];
+    expect(about?.kind).toBe('androidIntent');
+    if (about?.kind === 'androidIntent') {
+      expect(about.action).toBe('android.settings.DEVICE_INFO_SETTINGS');
+      expect(about.extras).toEqual(highlightPreferenceExtras('build_number'));
+      expect(about.hint).toBe(BUILD_NUMBER_HINT);
+    }
   });
 
   it('unknown OEM behaves like generic Android', () => {
@@ -201,14 +242,14 @@ describe('runPlan / serialization', () => {
     const deps: OpenDeps = {
       startAndroidIntent: async (a) => {
         tried.push(a.id);
-        return a.id === 'samsung.deviceInfo';
+        return a.id === 'android.deviceInfo';
       },
       openUrl: async () => false,
       openAppSettings: async () => false,
     };
     const res = await runPlan(selectOpeners(s26On), deps);
-    expect(res.opened?.id).toBe('samsung.deviceInfo');
-    expect(res.tried).toEqual(['android.devOptions.action', 'samsung.devOptions.component', 'samsung.deviceInfo']);
+    expect(res.opened?.id).toBe('android.deviceInfo');
+    expect(res.tried).toEqual(['android.devOptions.action', 'samsung.devOptions.component', 'android.deviceInfo']);
     expect(res.hint).toMatch(/Build number/);
   });
 
@@ -233,9 +274,23 @@ describe('runPlan / serialization', () => {
     expect(json.map((a: { id: string }) => a.id)).toEqual([
       'android.devOptions.action',
       'samsung.devOptions.component',
-      'samsung.deviceInfo',
+      'android.deviceInfo',
       'android.settings',
     ]);
+    expect(json.find((a: { id: string }) => a.id === 'android.deviceInfo')?.extras).toEqual(
+      highlightPreferenceExtras('build_number'),
+    );
     expect(JSON.parse(serializeAndroidPlan(plan))).toEqual(json);
+
+    const off = selectOpeners(ctx({ manufacturer: 'samsung', apiLevel: 36, devOptionsEnabled: false }));
+    const offJson = JSON.parse(serializeAndroidPlan(off));
+    expect(offJson.map((a: { id: string }) => a.id)).toEqual([
+      'samsung.softwareInfo',
+      'android.deviceInfo',
+      'android.settings',
+    ]);
+    expect(offJson[0].className).toBe('com.android.settings.Settings$SoftwareInformationActivity');
+    expect(offJson[0].extras).toEqual(highlightPreferenceExtras('build_number'));
+    expect(offJson[0].hint).toBe(BUILD_NUMBER_HINT);
   });
 });

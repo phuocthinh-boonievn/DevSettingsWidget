@@ -50,13 +50,14 @@ export async function runPlan(plan: OpenerPlan, deps: OpenDeps): Promise<OpenRes
 export function serializeAndroidPlan(plan: OpenerPlan): string {
   const compact = plan.attempts
     .filter((a): a is AndroidIntentAttempt => a.kind === 'androidIntent')
-    .map(({ kind, id, action, packageName, className, componentExtra, requires, minApi, maxApi, hint }) => ({
+    .map(({ kind, id, action, packageName, className, componentExtra, extras, requires, minApi, maxApi, hint }) => ({
       kind,
       id,
       action,
       packageName,
       className,
       componentExtra,
+      extras,
       requires,
       minApi,
       maxApi,

@@ -6,6 +6,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
 import org.json.JSONArray
@@ -38,12 +39,17 @@ object AttemptRunner {
     "com.google.android.settings",
   )
 
+  /** Row-highlight extras only. Anything else on a crafted plan is dropped. */
+  private val ALLOWED_STRING_EXTRA_KEYS = setOf(":settings:fragment_args_key")
+  private val ALLOWED_BUNDLE_EXTRA_KEYS = setOf(":settings:show_fragment_args")
+  private const val MAX_EXTRA_VALUE_LEN = 128
+
   /** Built-in plan used when the widget URI carries none (mirrors android-default in openers.ts). */
   val DEFAULT_PLAN: String = """
     [
       {"kind":"androidIntent","id":"android.devOptions.action","action":"android.settings.APPLICATION_DEVELOPMENT_SETTINGS","requires":"devOptionsEnabled"},
       {"kind":"androidIntent","id":"android.devOptions.dashboardComponent","action":"android.intent.action.MAIN","packageName":"com.android.settings","className":"com.android.settings.Settings${'$'}DevelopmentSettingsDashboardActivity","requires":"devOptionsEnabled"},
-      {"kind":"androidIntent","id":"android.deviceInfo","action":"android.settings.DEVICE_INFO_SETTINGS","hint":"Developer options are off. Tap \"Build number\" 7 times, then tap the widget again."},
+      {"kind":"androidIntent","id":"android.deviceInfo","action":"android.settings.DEVICE_INFO_SETTINGS","hint":"Tap Build number 7 times","extras":{"strings":{":settings:fragment_args_key":"build_number"},"bundles":{":settings:show_fragment_args":{":settings:fragment_args_key":"build_number"}}}},
       {"kind":"androidIntent","id":"android.settings","action":"android.settings.SETTINGS"}
     ]
   """.trimIndent()
@@ -90,7 +96,37 @@ object AttemptRunner {
       if (!allowedPackage(cePkg)) return null
       intent.putExtra(ce.optString("key"), ComponentName(cePkg, ce.optString("className")))
     }
+    applyExtras(intent, a)
     return intent
+  }
+
+  private fun putAllowedStrings(target: (String, String) -> Unit, obj: JSONObject) {
+    val keys = obj.keys()
+    while (keys.hasNext()) {
+      val key = keys.next()
+      if (key !in ALLOWED_STRING_EXTRA_KEYS) continue
+      val value = obj.optString(key)
+      if (value.isEmpty() || value.length > MAX_EXTRA_VALUE_LEN) continue
+      target(key, value)
+    }
+  }
+
+  /** Copy Settings highlight extras. Other keys are ignored. */
+  private fun applyExtras(intent: Intent, a: JSONObject) {
+    val extras = a.optJSONObject("extras") ?: return
+    extras.optJSONObject("strings")?.let { strings ->
+      putAllowedStrings({ key, value -> intent.putExtra(key, value) }, strings)
+    }
+    val bundles = extras.optJSONObject("bundles") ?: return
+    val keys = bundles.keys()
+    while (keys.hasNext()) {
+      val key = keys.next()
+      if (key !in ALLOWED_BUNDLE_EXTRA_KEYS) continue
+      val inner = bundles.optJSONObject(key) ?: continue
+      val bundle = Bundle()
+      putAllowedStrings({ innerKey, value -> bundle.putString(innerKey, value) }, inner)
+      if (!bundle.isEmpty) intent.putExtra(key, bundle)
+    }
   }
 
   /** Try one attempt. true = an activity was started. */
