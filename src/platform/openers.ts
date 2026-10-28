@@ -8,6 +8,7 @@ import type {
   AndroidIntentAttempt,
   AttemptCondition,
   DeviceContext,
+  IntentExtras,
   OpenAttempt,
   OpenerEntry,
   OpenerPlan,
@@ -27,8 +28,34 @@ export const ACTIONS = {
   QS_TILE_PREFERENCES: 'android.service.quicksettings.action.QS_TILE_PREFERENCES',
 } as const;
 
-const BUILD_NUMBER_HINT =
-  'Developer options are off. Tap "Build number" 7 times (enter your PIN if asked), then tap the widget again.';
+/** AOSP `SettingsActivity` extras that scroll to and flash one preference row. */
+export const SETTINGS_HIGHLIGHT = {
+  FRAGMENT_ARGS_KEY: ':settings:fragment_args_key',
+  SHOW_FRAGMENT_ARGS: ':settings:show_fragment_args',
+} as const;
+
+/**
+ * Preference key for the Build number row.
+ * AOSP/Pixel (`firmware_version.xml` / `BuildNumberPreferenceController`) and
+ * Samsung One UI Software information both use `build_number`.
+ */
+export const BUILD_NUMBER_PREFERENCE_KEY = 'build_number';
+
+export const BUILD_NUMBER_HINT = 'Tap Build number 7 times';
+
+/** Top-level highlight extra, and the same key inside `:settings:show_fragment_args`. */
+export function highlightPreferenceExtras(preferenceKey: string): IntentExtras {
+  return {
+    strings: { [SETTINGS_HIGHLIGHT.FRAGMENT_ARGS_KEY]: preferenceKey },
+    bundles: {
+      [SETTINGS_HIGHLIGHT.SHOW_FRAGMENT_ARGS]: {
+        [SETTINGS_HIGHLIGHT.FRAGMENT_ARGS_KEY]: preferenceKey,
+      },
+    },
+  };
+}
+
+const BUILD_NUMBER_EXTRAS = highlightPreferenceExtras(BUILD_NUMBER_PREFERENCE_KEY);
 
 /** Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS — the public, documented intent. */
 export const DEV_OPTIONS_ACTION: AndroidIntentAttempt = {
@@ -65,12 +92,17 @@ export const DEV_OPTIONS_LEGACY_COMPONENT: AndroidIntentAttempt = {
   bestEffort: true,
 };
 
-/** About phone — where "Build number" lives (AOSP / Pixel). */
+/**
+ * About phone (`Settings.ACTION_DEVICE_INFO_SETTINGS`).
+ * On Pixel/AOSP, Build number is the `build_number` row (often under Android version);
+ * the highlight extras scroll to it when that row is on this screen.
+ */
 export const DEVICE_INFO: AndroidIntentAttempt = {
   kind: 'androidIntent',
   id: 'android.deviceInfo',
   label: 'About phone (enable developer options)',
   action: ACTIONS.DEVICE_INFO,
+  extras: BUILD_NUMBER_EXTRAS,
   hint: BUILD_NUMBER_HINT,
 };
 
@@ -109,27 +141,26 @@ export const SAMSUNG_DEV_OPTIONS_COMPONENT: AndroidIntentAttempt = {
   label: 'Developer options (Samsung Settings component)',
 };
 
-const SAMSUNG_BUILD_NUMBER_HINT =
-  'Developer options are off. Go to Software information and tap "Build number" 7 times, then tap the widget again.';
-
-/** One UI "Software information" page (has Build number). Undocumented. */
+/**
+ * One UI Software information, where Build number actually lives (About phone only
+ * links here). Samsung Settings exports `Settings$SoftwareInformationActivity`
+ * (`com.android.settings` manifest; Pithus decompiles). The fragment behind it is
+ * `com.samsung.android.settings.deviceinfo.softwareinfo.SoftwareInfoSettings`
+ * (older builds: `...deviceinfo.SoftwareInfoSettings`). `SubSettings` is not
+ * exported, so the activity is the component to launch. `Settings$SoftwareInfoSettingsActivity`
+ * is not that activity, which is why the tap used to land on About phone.
+ */
 export const SAMSUNG_SOFTWARE_INFO: AndroidIntentAttempt = {
   kind: 'androidIntent',
   id: 'samsung.softwareInfo',
   label: 'Software information (Samsung)',
   action: 'android.intent.action.MAIN',
   packageName: SETTINGS_PKG,
-  className: 'com.android.settings.Settings$SoftwareInfoSettingsActivity',
+  className: 'com.android.settings.Settings$SoftwareInformationActivity',
+  extras: BUILD_NUMBER_EXTRAS,
   requires: 'devOptionsDisabled',
-  hint: 'Tap "Build number" 7 times to turn on Developer options, then tap the widget again.',
+  hint: BUILD_NUMBER_HINT,
   bestEffort: true,
-};
-
-export const SAMSUNG_DEVICE_INFO: AndroidIntentAttempt = {
-  ...DEVICE_INFO,
-  id: 'samsung.deviceInfo',
-  label: 'About phone (Samsung)',
-  hint: SAMSUNG_BUILD_NUMBER_HINT,
 };
 
 // iOS ------------------------------------------------------------------------
@@ -145,9 +176,8 @@ export const IOS_APP_SETTINGS: OpenAttempt = {
 };
 
 /**
- * PRIVATE, UNSUPPORTED iOS URL. NOT in the table by default.
- * May stop working on any iOS update and is App Store-rejectable. Local-only hack:
- * add it as the first iOS attempt if you really want it (see README).
+ * Private iOS URL. Not in the table: it can break on any iOS update and is not
+ * acceptable for the App Store. The iOS row opens this app's Settings page instead.
  */
 export const IOS_PRIVATE_PREFS_ATTEMPT: OpenAttempt = {
   kind: 'url',
@@ -179,7 +209,7 @@ export const OPENER_TABLE: OpenerEntry[] = [
         DEV_OPTIONS_ACTION,
         SAMSUNG_DEV_OPTIONS_COMPONENT,
         SAMSUNG_SOFTWARE_INFO,
-        SAMSUNG_DEVICE_INFO,
+        DEVICE_INFO,
         SETTINGS_ROOT,
       ],
     },
@@ -287,6 +317,13 @@ export function conditionHolds(cond: AttemptCondition | undefined, ctx: DeviceCo
 }
 
 /** Two attempts with the same signature launch the same thing; keep only the first. */
+function stablePairs(record: Record<string, string> | undefined): string {
+  return Object.entries(record ?? {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${v}`)
+    .join(',');
+}
+
 export function attemptSignature(a: OpenAttempt): string {
   switch (a.kind) {
     case 'androidIntent':
@@ -296,6 +333,11 @@ export function attemptSignature(a: OpenAttempt): string {
         a.packageName ?? '',
         a.className ?? '',
         a.componentExtra ? `${a.componentExtra.key}=${a.componentExtra.packageName}/${a.componentExtra.className}` : '',
+        stablePairs(a.extras?.strings),
+        Object.entries(a.extras?.bundles ?? {})
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([k, inner]) => `${k}{${stablePairs(inner)}}`)
+          .join(','),
       ].join('|');
     case 'url':
       return `url|${a.url}`;
@@ -314,9 +356,9 @@ function attemptApiOk(a: OpenAttempt, ctx: DeviceContext): boolean {
 /**
  * Pick the ordered attempts for a target.
  * Matching entries are sorted most-specific first; their attempt lists are concatenated
- * (so less specific entries act as safety-net fallbacks), de-duplicated by launch signature,
- * filtered
- * by API bounds and dev-options state; `lastResort` attempts are moved to the end.
+ * (so less specific entries act as safety-net fallbacks), de-duplicated by launch signature
+ * (action, component, and extras), filtered by API bounds and dev-options state;
+ * `lastResort` attempts are moved to the end.
  */
 export function selectOpeners(
   ctx: DeviceContext,

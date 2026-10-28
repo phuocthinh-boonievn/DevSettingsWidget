@@ -53,6 +53,15 @@ export interface ComponentExtra {
   className: string;
 }
 
+/**
+ * Extras copied onto the Intent.
+ * `bundles` values become nested string-only Bundles (Settings highlight args).
+ */
+export interface IntentExtras {
+  strings?: Record<string, string>;
+  bundles?: Record<string, Record<string, string>>;
+}
+
 /** Android `startActivity(Intent(action).setComponent(...))`. */
 export interface AndroidIntentAttempt extends AttemptBase {
   kind: 'androidIntent';
@@ -60,6 +69,7 @@ export interface AndroidIntentAttempt extends AttemptBase {
   packageName?: string;
   className?: string;
   componentExtra?: ComponentExtra;
+  extras?: IntentExtras;
 }
 
 /** Open a URL with `Linking.openURL` (iOS `app-settings:`, etc.). */

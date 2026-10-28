@@ -1,58 +1,54 @@
 # Architecture
 
-DevSettings Widget is an Expo SDK 57 app. The home-screen widget and the in-app button both open Settings by running the same plan. The plan is chosen in TypeScript and executed in Kotlin on Android.
+The home-screen widget and the in-app button open Settings with the same plan. TypeScript chooses the plan. Kotlin runs it on Android.
 
 ```
 DeviceContext
 { platform, manufacturer, brand, apiLevel, devOptionsEnabled }
         │
         ▼
-src/platform/openers.ts          pure, no React Native imports
+src/platform/openers.ts
   OPENER_TABLE + selectOpeners()
         │
         ├─ in-app button ─ src/platform/device.ts ─ runPlan()
-        │                         │
-        │                         ▼
-        └─ widget render ─ buildWidgetUri() ─ devsettingswidget://open?plan=<json>
+        │
+        └─ widget render ─ buildWidgetUri()
                                   │
                                   ▼
-                    modules/dev-settings-launcher (Kotlin)
-                      DevSettingsTrampolineActivity
-                      AttemptRunner.run(plan)   ← re-checks dev-options state
+                    DevSettingsTrampolineActivity
+                      AttemptRunner.run(plan)
                                   │
                                   ▼
-                    startActivity(first allowed Settings intent that resolves)
+                    startActivity(first Settings intent that resolves)
 ```
 
-## Why a trampoline
+`react-native-android-widget` can only fire a URI. The widget stores a plan URI. An invisible activity runs that plan and finishes without bringing the app UI forward. The TypeScript table stays the source of truth. A tap does not boot the React Native runtime.
 
-`react-native-android-widget` can only fire `ACTION_VIEW` on a URI (`OPEN_URI`). That cannot express `android.settings.*` intents. The widget stores a `devsettingswidget://open?plan=...` URI. An exported, invisible activity catches it, runs the plan, and finishes without bringing the app UI forward (`taskAffinity=""`, `noHistory`, translucent theme).
-
-The TypeScript table stays the source of truth. The widget does not boot the React Native runtime on tap.
-
-## Selection rules
+## Selection
 
 `selectOpeners(ctx, target)` in `src/platform/openers.ts`:
 
-1. Keep table rows whose `match` fits the device. Omitted fields are wildcards. A row with `minApi` or `maxApi` does not match when `apiLevel` is null.
-2. Sort most specific first. OEM is +4, an API bound is +2, a platform is +1. Earlier table order breaks ties.
-3. Concatenate that row's attempts for the target, then less-specific rows as fallbacks.
-4. Drop duplicates with the same launch signature (action + component + extra).
-5. Drop attempts outside `minApi` / `maxApi`, and attempts whose `requires` does not hold. `devOptionsEnabled === null` keeps the attempt.
-6. Move `lastResort` attempts (the Settings root) to the end.
+1. Keep rows whose `match` fits the device. A row with an API bound does not match when `apiLevel` is null.
+2. Sort most specific first (OEM, then API range, then platform). Earlier rows break ties.
+3. Concatenate attempts, then less-specific rows as fallbacks.
+4. Drop duplicates with the same launch signature (action, component, extras).
+5. Drop attempts outside their API bounds, and attempts whose `requires` does not hold. Unknown dev-options state keeps the attempt.
+6. Move `lastResort` attempts to the end.
 
-Targets today: `developerOptions` and `wirelessDebugging`.
+Targets: `developerOptions` and `wirelessDebugging`.
 
-## Native allowlist
+When developer options are off, Samsung opens Software information and asks Settings to scroll to the Build number row. Other Android devices open About phone the same way. The main Settings screen is the last resort. The toast on those steps is "Tap Build number 7 times".
 
-`AttemptRunner.kt` is the only code that calls `startActivity`. The trampoline is exported, so the runner refuses anything that is not a Settings-style action and a Settings package prefix (`ALLOWED_ACTION_PREFIXES`, `ALLOWED_PACKAGE_PREFIXES`). A new OEM component outside those prefixes does nothing until the prefix is added. See the README section "Adding a new device / OEM / Android version".
+## Native runner
 
-The runner reads `Settings.Global.DEVELOPMENT_SETTINGS_ENABLED` again at tap time and skips attempts whose `requires` does not hold. It cannot add attempts that the widget URI already dropped. The in-app button builds a fresh plan on every press. Opening the app also asks the widget to re-render (`refreshWidgets`).
+`AttemptRunner.kt` is the only code that calls `startActivity`. It re-reads whether developer options are enabled at tap time and skips steps that do not match. It cannot add steps the widget plan already dropped. Opening the app asks placed widgets to re-render.
+
+The runner only starts Settings screens. A package it does not already accept is skipped, and only the Build number highlight extras are copied onto the intent.
 
 ## iOS
 
-There is no public URL for Developer Mode. `ios-default` is `Linking.openSettings()` plus a hint. `targets/widget/` is a WidgetKit scaffold (`@bacons/apple-targets`) that opens `devsettings:///?open=developerOptions`. It is not built here. `IOS_PRIVATE_PREFS_ATTEMPT` is an optional local-only `App-Prefs:` hack and is not in the table.
+There is no public URL for Developer Mode. The iOS row opens this app's Settings page and shows a hint. `targets/widget/` is an unbuilt WidgetKit scaffold.
 
-## What is generated
+## Generated projects
 
-`android/` and `ios/` are Continuous Native Generation output (`npx expo prebuild`). They are gitignored. Native behavior that must survive prebuild lives in `app.json` plugins and in `modules/dev-settings-launcher/`.
+`android/` and `ios/` come from `npx expo prebuild` and are gitignored. Native behavior that must survive prebuild lives in `app.json` plugins and in `modules/dev-settings-launcher/`.
